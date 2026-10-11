@@ -1,5 +1,9 @@
 # Joint ASR and conversation-event training
 
+Launch with `scripts/train.sh` and `scripts/eval.sh`; see
+[`scripts/README.md`](../scripts/README.md) for environment variables, test-set
+evaluation, and two-WAV inference examples.
+
 `src/maai/models/vap_asr_bc.py` defines `VapGPT_asr_bc`, extending `VapGPT_bc`.
 The original CPC encoder, channel/cross-channel transformers, VAP/VAD heads,
 and five event heads are shared with the ASR task. A new PyTorch

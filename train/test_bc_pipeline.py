@@ -286,6 +286,13 @@ def main():
                                      loss_weights={"asr": 0.5})
         assert "asr" in metrics and metrics["total"] > 0
         actual_checkpoint = ROOT / "vap_state_dict_jp_20hz_20000msec.pt"
+        # A small real CPC encoder fixture makes evaluation checks unconditional.
+        if not actual_checkpoint.exists():
+            encoder_module = load("maai.checkpoint_encoder", ROOT / "src/maai/checkpoint_encoder.py")
+            fixture = encoder_module.VAPCheckpointEncoder(256, 256, 1, 5, 20)
+            actual_checkpoint = Path(directory) / "vap_fixture_20hz.pt"
+            torch.save({f"encoder.{key}": value for key, value in fixture.state_dict().items()},
+                       actual_checkpoint)
         if actual_checkpoint.exists():
             checkpoint_model = asr_module.VapGPT_asr_bc(trainer.VapConfig(dim=8, frame_hz=20), asr_conf)
             original_head = checkpoint_model.bc_head.weight.detach().clone()
@@ -302,7 +309,30 @@ def main():
                                           memory_lengths=torch.tensor([20]))
             assert result["vad"].shape == (1, 20, 2)
             assert torch.isfinite(result["asr_logits"]).all()
-            print("PASS: real VAP checkpoint encoder-only initialization, independent towers, 20 Hz features, joint-model forward")
+            evaluator = load("eval_asr_bc", ROOT / "train/eval_asr_bc.py")
+            payload = {"state_dict": checkpoint_model.state_dict(), "conf": vars(checkpoint_model.conf),
+                       "asr_conf": vars(asr_conf), "tokenizer": tokenizer.to_dict(),
+                       "encoder_spec": {"crop_frames": 0}}
+            restored = evaluator.load_eval_model(payload, tokenizer, torch.device("cpu"))
+            checkpoint_model.eval()
+            before, _ = checkpoint_model(encoded_a, encoded_b, return_logits=True)
+            after, _ = restored(encoded_a, encoded_b, return_logits=True)
+            torch.testing.assert_close(before["bc"], after["bc"])
+            evaluation_dataset = joint_dataset_module.ConvASRBCDataset(path, frame_hz=20,
+                                                                        tokenizer=tokenizer, max_tokens=32)
+            metrics = evaluator.evaluate_dataset(restored, evaluation_dataset, tokenizer,
+                                                  torch.device("cpu"), Path(directory),
+                                                  threshold=0.5, max_new_tokens=2)
+            assert metrics["samples"] == 1 and metrics["reference_characters"] == 4
+            assert set(metrics["events"]) == set(trainer.EVENTS)
+            assert evaluator.edit_distance("abc", "adc") == 1
+            assert evaluator.event_metrics({"tp": 1, "fp": 0, "fn": 0, "tn": 1})["f1"] == 1
+            evaluator.load_waveform = lambda path, sample_rate, mono: (torch.ones(1, 16000), sample_rate)
+            wav_result = evaluator.infer_wavs(restored, tokenizer, torch.device("cpu"),
+                                              "a.wav", "b.wav", max_new_tokens=2)
+            assert len(wav_result["event_probabilities"]["bc"]) == 20
+            print("PASS: self-contained checkpoint reload, test-set metrics/CER, dual-WAV inference")
+            print("PASS: CPC checkpoint encoder-only initialization, independent towers, 20 Hz features, joint-model forward")
     print("PASS: indexed reading, default output, event labels, padding masks, five head gradients, inference, optimizer step")
     print("PASS: joint dataset/DataLoader format, empty transcripts, CPC encoded lengths, Qwen HF tokenizer, teacher forcing, causal/audio masks, decoder and shared gradients, BC/joint checkpoints, EOS generation, joint optimizer step")
 

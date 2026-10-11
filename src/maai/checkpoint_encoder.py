@@ -72,7 +72,8 @@ class VAPCheckpointEncoder(nn.Module):
     per record by default; context/window management is the caller's job.
     """
 
-    def __init__(self, cnn_dim, recurrent_dim, layers, kernel_size, frame_hz, freeze=True):
+    def __init__(self, cnn_dim, recurrent_dim, layers, kernel_size, frame_hz, freeze=True,
+                 crop_frames=0):
         super().__init__()
         if frame_hz <= 0:
             raise ValueError("frame_hz must be positive")
@@ -81,6 +82,7 @@ class VAPCheckpointEncoder(nn.Module):
             raise ValueError("frame_hz must divide the 100 Hz CPC feature rate")
         self.sample_rate = 16000
         self.frame_hz = frame_hz
+        self.crop_frames = crop_frames
         self.downsample_ratio = 160 * int(stride)
         self.output_dim = recurrent_dim
         self.encoder = nn.Module()
@@ -107,7 +109,12 @@ class VAPCheckpointEncoder(nn.Module):
             waveform = waveform.unsqueeze(1)
         if waveform.ndim != 3 or waveform.shape[1] != 1:
             raise ValueError("CPC input must have shape (batch, 1, samples)")
-        return self.encoder.gAR(self.encoder.gEncoder(waveform).transpose(1, 2))
+        features = self.encoder.gEncoder(waveform).transpose(1, 2)
+        if self.crop_frames:
+            if self.crop_frames != 2:
+                raise ValueError("Supported feature crops are 0 or 2 frames")
+            features = features[:, 1:-1]
+        return self.encoder.gAR(features)
 
     def forward_specific(self, features):
         return self.downsample(features)
@@ -121,6 +128,7 @@ class VAPCheckpointEncoder(nn.Module):
             layer = getattr(self.encoder.gEncoder, f"conv{index}")
             lengths = torch.div(lengths + 2 * layer.padding[0] - layer.kernel_size[0],
                                 layer.stride[0], rounding_mode="floor") + 1
+        lengths = lengths - self.crop_frames
         layer = self.downsample[1]
         return (torch.div(lengths - layer.kernel_size[0], layer.stride[0],
                           rounding_mode="floor") + 1).clamp_min(0)
@@ -137,7 +145,13 @@ def load_vap_encoder(path, frame_hz=None, freeze=True):
     """Strictly load encoder.* tensors, ignoring every non-encoder parameter."""
     payload = torch.load(path, map_location="cpu", weights_only=True)
     state = payload.get("state_dict", payload)
-    prefix = "encoder."
+    return encoder_from_state_dict(state,
+                                   checkpoint_frame_hz(path) if frame_hz is None else float(frame_hz),
+                                   freeze=freeze)
+
+
+def encoder_from_state_dict(state, frame_hz, prefix="encoder.", freeze=True, crop_frames=0):
+    """Rebuild an encoder directly from saved tensors without an external CPC file."""
     encoder_state = {key[len(prefix):]: value for key, value in state.items()
                      if key.startswith(prefix) and torch.is_tensor(value)}
     if not encoder_state:
@@ -151,7 +165,6 @@ def load_vap_encoder(path, frame_hz=None, freeze=True):
                  for key in encoder_state)
     kernel_size = encoder_state["downsample.1.weight"].shape[-1]
     encoder = VAPCheckpointEncoder(cnn_dim, hidden_dim, layers, kernel_size,
-                                   checkpoint_frame_hz(path) if frame_hz is None else float(frame_hz),
-                                   freeze=freeze)
+                                   float(frame_hz), freeze=freeze, crop_frames=crop_frames)
     encoder.load_state_dict(encoder_state, strict=True)
     return encoder.eval()

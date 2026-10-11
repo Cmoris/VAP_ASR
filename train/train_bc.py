@@ -158,6 +158,7 @@ def main():
         scheduler.step(val_metrics["total"])
         print(json.dumps({"epoch": epoch, "train": train_metrics, "val": val_metrics}))
         payload = {"state_dict": model.state_dict(), "conf": vars(conf), "epoch": epoch,
+                   "encoder_spec": {"crop_frames": 0 if args.encoder_checkpoint else 2},
                    "optimizer": optimizer.state_dict(), "scheduler": scheduler.state_dict(),
                    "val_metrics": val_metrics}
         torch.save(payload, output / "last.ckpt")

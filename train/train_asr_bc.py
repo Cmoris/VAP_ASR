@@ -140,6 +140,7 @@ def main():
         scheduler.step(val_metrics["total"])
         print(json.dumps({"epoch": epoch, "train": train_metrics, "val": val_metrics}))
         payload = {"state_dict": model.state_dict(), "conf": vars(conf),
+                   "encoder_spec": {"crop_frames": 0 if args.encoder_checkpoint else 2},
                    "asr_conf": asdict(asr_conf), "tokenizer": tokenizer.to_dict(),
                    "loss_weights": weights, "epoch": epoch,
                    "optimizer": optimizer.state_dict(), "scheduler": scheduler.state_dict(),
