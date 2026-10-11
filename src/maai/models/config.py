@@ -85,8 +85,8 @@ class VapConfig:
         """
         return VapConfig(
             **{
-                k.replace("vap_", ""): v
-                for k, v in vars(args).items()
-                if k.startswith("vap_")
+                name: getattr(args, f"vap_{name}")
+                for name, config_field in VapConfig.__dataclass_fields__.items()
+                if config_field.init and hasattr(args, f"vap_{name}")
             }
         )
