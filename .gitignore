@@ -1,0 +1,13 @@
+
+vap_main/output_offline.txt
+/rvap.egg-info
+all.bat
+*.bat
+/train/lightning_logs
+*.onnx
+.vscode/
+tools/output_offline.txt
+__pycache__/
+tflite_vap/
+tfjs_vap/
+/.claude
